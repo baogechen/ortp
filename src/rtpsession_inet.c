@@ -36,6 +36,7 @@
 #undef ExternC
 #ifdef ORTP_WINDOWS_DESKTOP
 #include <QOS2.h>
+#include <VersionHelpers.h>
 #endif
 #endif
 
@@ -281,14 +282,20 @@ static ortp_socket_t create_and_bind(const char *addr, int *port, int *sock_fami
 	return sock;
 }
 
-static void set_socket_sizes(ortp_socket_t sock, unsigned int sndbufsz, unsigned int rcvbufsz){
+void _rtp_session_apply_socket_sizes(RtpSession * session){
 	int err;
 	bool_t done=FALSE;
+	ortp_socket_t sock = session->rtp.gs.socket;
+	unsigned int sndbufsz = session->rtp.snd_socket_size;
+	unsigned int rcvbufsz = session->rtp.rcv_socket_size;
+	
+	if (sock == (ortp_socket_t)-1) return;
+	
 	if (sndbufsz>0){
 #ifdef SO_SNDBUFFORCE
 		err = setsockopt(sock, SOL_SOCKET, SO_SNDBUFFORCE, (void *)&sndbufsz, sizeof(sndbufsz));
 		if (err == -1) {
-			ortp_error("Fail to increase socket's send buffer size with SO_SNDBUFFORCE: %s.", getSocketError());
+			ortp_warning("Fail to increase socket's send buffer size with SO_SNDBUFFORCE: %s.", getSocketError());
 		}else done=TRUE;
 #endif
 		if (!done){
@@ -303,7 +310,7 @@ static void set_socket_sizes(ortp_socket_t sock, unsigned int sndbufsz, unsigned
 #ifdef SO_RCVBUFFORCE
 		err = setsockopt(sock, SOL_SOCKET, SO_RCVBUFFORCE, (void *)&rcvbufsz, sizeof(rcvbufsz));
 		if (err == -1) {
-			ortp_error("Fail to increase socket's recv buffer size with SO_RCVBUFFORCE: %s.", getSocketError());
+			ortp_warning("Fail to increase socket's recv buffer size with SO_RCVBUFFORCE: %s.", getSocketError());
 		}
 #endif
 		if (!done){
@@ -345,10 +352,10 @@ rtp_session_set_local_addr (RtpSession * session, const char * addr, int rtp_por
 
 	sock=create_and_bind(addr,&rtp_port,&sockfamily,session->reuseaddr,&session->rtp.gs.loc_addr,&session->rtp.gs.loc_addrlen);
 	if (sock!=-1){
-		set_socket_sizes(sock,session->rtp.snd_socket_size,session->rtp.rcv_socket_size);
 		session->rtp.gs.sockfamily=sockfamily;
 		session->rtp.gs.socket=sock;
 		session->rtp.gs.loc_port=rtp_port;
+		_rtp_session_apply_socket_sizes(session);
 		/*try to bind rtcp port */
 		sock=create_and_bind(addr,&rtcp_port,&sockfamily,session->reuseaddr,&session->rtcp.gs.loc_addr,&session->rtcp.gs.loc_addrlen);
 		if (sock!=(ortp_socket_t)-1){
@@ -622,9 +629,6 @@ int rtp_session_set_dscp(RtpSession *session, int dscp){
 	int tos;
 	int proto;
 	int value_type;
-#if (_WIN32_WINNT >= 0x0600) && defined(ORTP_WINDOWS_DESKTOP)
-	OSVERSIONINFOEX ovi;
-#endif
 
 	// Store new DSCP value if one is specified
 	if (dscp>=0) session->dscp = dscp;
@@ -633,13 +637,8 @@ int rtp_session_set_dscp(RtpSession *session, int dscp){
 	if (session->rtp.gs.socket == (ortp_socket_t)-1) return 0;
 
 #if (_WIN32_WINNT >= 0x0600) && defined(ORTP_WINDOWS_DESKTOP)
-	memset(&ovi, 0, sizeof(ovi));
-	ovi.dwOSVersionInfoSize = sizeof(ovi);
-	GetVersionEx((LPOSVERSIONINFO) & ovi);
-
-	ortp_message("check OS support for qwave.lib: %i %i %i\n",
-				ovi.dwMajorVersion, ovi.dwMinorVersion, ovi.dwBuildNumber);
-	if (ovi.dwMajorVersion > 5) {
+	ortp_message("check OS support for qwave.lib");
+	if (IsWindowsVistaOrGreater()) {
 		if (session->dscp==0)
 			tos=QOSTrafficTypeBestEffort;
 		else if (session->dscp==0x8)
@@ -661,8 +660,7 @@ int rtp_session_set_dscp(RtpSession *session, int dscp){
 			QoSResult = QOSCreateHandle(&version, &session->rtp.QoSHandle);
 
 			if (QoSResult != TRUE){
-				ortp_error("QOSCreateHandle failed to create handle with error %d\n",
-					GetLastError());
+				ortp_error("QOSCreateHandle failed to create handle with error %d", GetLastError());
 				retval=-1;
 			}
 		}
@@ -677,8 +675,7 @@ int rtp_session_set_dscp(RtpSession *session, int dscp){
 				&session->rtp.QoSFlowID);
 
 			if (QoSResult != TRUE){
-				ortp_error("QOSAddSocketToFlow failed to add a flow with error %d\n",
-					GetLastError());
+				ortp_error("QOSAddSocketToFlow failed to add a flow with error %d", GetLastError());
 				retval=-1;
 			}
 		}
@@ -1006,11 +1003,7 @@ static int rtp_sendmsg(int sock,mblk_t *m, const struct sockaddr *rem_addr, sock
 #endif
 
 ortp_socket_t rtp_session_get_socket(RtpSession *session, bool_t is_rtp){
-	if (session->rtcp_mux){
-		return session->rtp.gs.socket;
-	}else{
-		return is_rtp ? session->rtp.gs.socket : session->rtcp.gs.socket;
-	}
+	return is_rtp ? session->rtp.gs.socket : session->rtcp.gs.socket;
 }
 
 int _ortp_sendto(ortp_socket_t sockfd, mblk_t *m, int flags, const struct sockaddr *destaddr, socklen_t destlen){
@@ -1049,7 +1042,12 @@ int rtp_session_sendto(RtpSession *session, bool_t is_rtp, mblk_t *m, int flags,
 }
 
 int rtp_session_recvfrom(RtpSession *session, bool_t is_rtp, mblk_t *m, int flags, struct sockaddr *from, socklen_t *fromlen) {
-	return rtp_session_rtp_recv_abstract(is_rtp ? session->rtp.gs.socket : session->rtcp.gs.socket, m, flags, from, fromlen);
+	int ret = rtp_session_rtp_recv_abstract(is_rtp ? session->rtp.gs.socket : session->rtcp.gs.socket, m, flags, from, fromlen);
+	if (ret >= 0) {
+		/* Store the local port in the recv_addr of the mblk_t, the address is already filled in rtp_session_rtp_recv_abstract */
+		m->recv_addr.port = htons(is_rtp ? session->rtp.gs.loc_port : session->rtcp.gs.loc_port);
+	}
+	return ret;
 }
 
 void update_sent_bytes(OrtpStream *os, int nbytes) {
@@ -1140,14 +1138,15 @@ int rtp_session_rtp_send (RtpSession * session, mblk_t * m){
 
 static int rtp_session_rtcp_sendto(RtpSession * session, mblk_t * m, struct sockaddr *destaddr, socklen_t destlen, bool_t is_aux){
 	int error=0;
-	ortp_socket_t sockfd = rtp_session_get_socket(session, FALSE);
 
+	/* Even in RTCP mux, we send through the RTCP RtpTransport, which will itself take in charge to do the sending of the packet
+	 * through the RTP endpoint*/
 	if (rtp_session_using_transport(session, rtcp)){
-			error = (session->rtcp.gs.tr->t_sendto) (session->rtcp.gs.tr, m, 0,
-			destaddr, destlen);
+		error = (session->rtcp.gs.tr->t_sendto) (session->rtcp.gs.tr, m, 0, destaddr, destlen);
 	}else{
-		error=_ortp_sendto(sockfd,m,0,destaddr,destlen);
+		error=_ortp_sendto(rtp_session_get_socket(session, session->rtcp_mux),m,0,destaddr,destlen);
 	}
+
 	if (!is_aux){
 		if (error < 0){
 			if (session->on_network_error.count>0){
@@ -1486,13 +1485,12 @@ static void reply_to_collaborative_rtcp_xr_packet(RtpSession *session, mblk_t *b
 	}
 }
 
-static void rtp_process_incoming_packet(RtpSession * session, mblk_t * mp, bool_t is_rtp_packet,uint32_t user_ts) {
+static void rtp_process_incoming_packet(RtpSession * session, mblk_t * mp, bool_t is_rtp_packet, uint32_t user_ts, bool_t received_via_rtcp_mux) {
 	bool_t sock_connected=(is_rtp_packet && !!(session->flags & RTP_SOCKET_CONNECTED))
 		|| (!is_rtp_packet && !!(session->flags & RTCP_SOCKET_CONNECTED));
 
 	struct sockaddr *remaddr = NULL;
 	socklen_t addrlen;
-	bool_t received_via_rtcp_mux = FALSE;
 
 	if (!mp){
 		return;
@@ -1500,17 +1498,6 @@ static void rtp_process_incoming_packet(RtpSession * session, mblk_t * mp, bool_
 	remaddr = (struct sockaddr *)&mp->net_addr;
 	addrlen = mp->net_addrlen;
 
-	/*in case of rtcp-mux, we are allowed to reconsider whether it is an RTP or RTCP packet*/
-	if (session->rtcp_mux && is_rtp_packet){
-		if (rtp_get_version(mp) == 2){
-			int pt = rtp_get_payload_type(mp);
-			if (pt >= 64 && pt <= 95){
-				/*this is assumed to be an RTCP packet*/
-				is_rtp_packet = FALSE;
-				received_via_rtcp_mux = TRUE;
-			}
-		}
-	}
 	
 	if (session->spliced_session){
 		/*this will forward all traffic to the spliced session*/
@@ -1556,44 +1543,41 @@ static void rtp_process_incoming_packet(RtpSession * session, mblk_t * mp, bool_
 	}
 }
 
-void rtp_session_process_incoming(RtpSession * session, mblk_t *mp, bool_t is_rtp_packet, uint32_t ts) {
+void rtp_session_process_incoming(RtpSession * session, mblk_t *mp, bool_t is_rtp_packet, uint32_t ts, bool_t received_via_rtcp_mux) {
 	if (session->net_sim_ctx && session->net_sim_ctx->params.mode == OrtpNetworkSimulatorInbound) {
 		/*drain possible packets queued in the network simulator*/
 		mp = rtp_session_network_simulate(session, mp, &is_rtp_packet);
-		rtp_process_incoming_packet(session, mp, is_rtp_packet, ts);
+		rtp_process_incoming_packet(session, mp, is_rtp_packet, ts, received_via_rtcp_mux); /*BUG here: received_via_rtcp_mux is not preserved by network simulator*/
 	} else if (mp != NULL) {
-		rtp_process_incoming_packet(session, mp, is_rtp_packet, ts);
+		rtp_process_incoming_packet(session, mp, is_rtp_packet, ts, received_via_rtcp_mux);
 	}
 }
 
 int rtp_session_rtp_recv (RtpSession * session, uint32_t user_ts) {
 	int error;
-	ortp_socket_t sockfd=session->rtp.gs.socket;
 	struct sockaddr_storage remaddr;
-
 	socklen_t addrlen = sizeof (remaddr);
 	mblk_t *mp;
 
-	if ((sockfd==(ortp_socket_t)-1) && !rtp_session_using_transport(session, rtp)) return -1;  /*session has no sockets for the moment*/
+	if ((session->rtp.gs.socket==(ortp_socket_t)-1) && !rtp_session_using_transport(session, rtp)) return -1;  /*session has no sockets for the moment*/
 
 	while (1)
 	{
 		bool_t sock_connected=!!(session->flags & RTP_SOCKET_CONNECTED);
-		bool_t is_rtp_packet = TRUE;
 
 		mp = msgb_allocator_alloc(&session->rtp.gs.allocator, session->recv_buf_size);
 		mp->reserved1 = user_ts;
 
 		if (sock_connected){
-			error=rtp_session_rtp_recv_abstract(sockfd, mp, 0, NULL, NULL);
+			error=rtp_session_recvfrom(session, TRUE, mp, 0, NULL, NULL);
 		}else if (rtp_session_using_transport(session, rtp)) {
 			error = (session->rtp.gs.tr->t_recvfrom)(session->rtp.gs.tr, mp, 0, (struct sockaddr *) &remaddr, &addrlen);
 		} else {
-			error = rtp_session_rtp_recv_abstract(sockfd, mp, 0, (struct sockaddr *) &remaddr, &addrlen);
+			error = rtp_session_recvfrom(session, TRUE, mp, 0, (struct sockaddr *) &remaddr, &addrlen);
 		}
 		if (error > 0){
 			mp->b_wptr+=error;
-			rtp_session_process_incoming(session, mp, is_rtp_packet, user_ts);
+			rtp_session_process_incoming(session, mp, TRUE, user_ts, FALSE);
 		}
 		else
 		{
@@ -1612,7 +1596,7 @@ int rtp_session_rtp_recv (RtpSession * session, uint32_t user_ts) {
 #endif
 			}else{
 				/*EWOULDBLOCK errors or transports returning 0 are ignored.*/
-				rtp_session_process_incoming(session, NULL, is_rtp_packet, user_ts);
+				rtp_session_process_incoming(session, NULL, TRUE, user_ts, FALSE);
 			}
 			freemsg(mp);
 			return -1;
@@ -1634,13 +1618,12 @@ int rtp_session_rtcp_recv (RtpSession * session) {
 	while (1)
 	{
 		bool_t sock_connected=!!(session->flags & RTCP_SOCKET_CONNECTED);
-		bool_t is_rtp_packet = FALSE;
 
 		mp = msgb_allocator_alloc(&session->rtp.gs.allocator, RTCP_MAX_RECV_BUFSIZE);
 		mp->reserved1 = session->rtp.rcv_last_app_ts;
 
 		if (sock_connected){
-			error=rtp_session_rtp_recv_abstract(session->rtcp.gs.socket, mp, 0, NULL, NULL);
+			error=rtp_session_recvfrom(session, FALSE, mp, 0, NULL, NULL);
 		}else{
 			addrlen=sizeof (remaddr);
 
@@ -1649,7 +1632,7 @@ int rtp_session_rtcp_recv (RtpSession * session) {
 					(struct sockaddr *) &remaddr,
 					&addrlen);
 			}else{
-				error=rtp_session_rtp_recv_abstract (session->rtcp.gs.socket,mp, 0,
+				error=rtp_session_recvfrom(session, FALSE, mp, 0,
 					(struct sockaddr *) &remaddr,
 					&addrlen);
 			}
@@ -1657,7 +1640,7 @@ int rtp_session_rtcp_recv (RtpSession * session) {
 		if (error > 0)
 		{
 			mp->b_wptr += error;
-			rtp_session_process_incoming(session, mp, is_rtp_packet, session->rtp.rcv_last_app_ts);
+			rtp_session_process_incoming(session, mp, FALSE, session->rtp.rcv_last_app_ts, FALSE);
 		}
 		else
 		{
@@ -1677,7 +1660,7 @@ int rtp_session_rtcp_recv (RtpSession * session) {
 				session->rtp.recv_errno=errnum;
 			}else{
 				/*EWOULDBLOCK errors or transports returning 0 are ignored.*/
-				rtp_session_process_incoming(session, NULL, is_rtp_packet, session->rtp.rcv_last_app_ts);
+				rtp_session_process_incoming(session, NULL, FALSE, session->rtp.rcv_last_app_ts, FALSE);
 			}
 
 			freemsg(mp);

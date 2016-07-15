@@ -1,5 +1,5 @@
 dnl Process this file with autoconf to produce a configure script.
-AC_INIT([ortp],[0.26.0])
+AC_INIT([ortp],[0.27.0])
 AC_CANONICAL_SYSTEM
 
 case $INSTALL in
@@ -405,9 +405,6 @@ AC_OUTPUT(
 	src/tests/win_receiver/Makefile
 	src/tests/win_sender/Makefile
 	build/Makefile
-	build/win32native/Makefile
-	build/wince/Makefile
-	build/winmob/Makefile
 	ortp.pc
 	ortp.spec
 	ortp.doxygen

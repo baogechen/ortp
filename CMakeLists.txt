@@ -21,14 +21,14 @@
 ############################################################################
 
 cmake_minimum_required(VERSION 3.0)
-project(oRTP VERSION 0.26.0)
+project(oRTP VERSION 0.27.0)
 
 
 set(ORTP_MAJOR_VERSION ${PROJECT_VERSION_MAJOR})
 set(ORTP_MINOR_VERSION ${PROJECT_VERSION_MINOR})
 set(ORTP_MICRO_VERSION ${PROJECT_VERSION_PATCH})
 set(ORTP_VERSION ${PROJECT_VERSION})
-set(ORTP_SO_VERSION "11") # incremented on January, the 20th 2015. DO NOT INCREMENT BEFORE ORTP 0.26
+set(ORTP_SO_VERSION "12") # incremented on June, the 1st 2016. DO NOT INCREMENT BEFORE ORTP 0.28
 
 
 option(ENABLE_SHARED "Build shared library." YES)
@@ -133,7 +133,11 @@ add_definitions(-DHAVE_CONFIG_H)
 
 set(STRICT_OPTIONS_CPP )
 set(STRICT_OPTIONS_C )
-if(NOT MSVC)
+if(MSVC)
+	if(ENABLE_STRICT)
+		list(APPEND STRICT_OPTIONS_CPP "/WX")
+	endif()
+else()
 	list(APPEND STRICT_OPTIONS_CPP "-Wall" "-Wuninitialized")
 	list(APPEND STRICT_OPTIONS_C "-Wdeclaration-after-statement" "-Wstrict-prototypes" "-Wno-error=strict-prototypes")
 	if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
