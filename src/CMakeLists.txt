@@ -19,16 +19,15 @@
 # Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #
 ############################################################################
-
-set(LIBS ${BCTOOLBOX_CORE_LIBRARIES})
+set(ORTP_LIBS ${BCTOOLBOX_LIBRARIES})
 if(NOT ANDROID)
-	list(APPEND LIBS ${CMAKE_THREAD_LIBS_INIT})
+	list(APPEND ORTP_LIBS ${CMAKE_THREAD_LIBS_INIT})
 endif()
 if(HAVE_RT)
-	list(APPEND LIBS rt)
+	list(APPEND ORTP_LIBS rt)
 endif()
 if(LIBM)
-	list(APPEND LIBS ${LIBM})
+	list(APPEND ORTP_LIBS ${LIBM})
 endif()
 
 set(ORTP_SOURCE_FILES_C
@@ -72,10 +71,10 @@ endif()
 if(WIN32)
 	add_definitions(-DWINDOWS_NATIVE)
 	if(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
-		list(APPEND LIBS ws2_32)
+		list(APPEND ORTP_LIBS ws2_32)
 	endif()
 	if(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsPhone" AND NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
-		list(APPEND LIBS delayimp Winmm Qwave)
+		list(APPEND ORTP_LIBS delayimp Winmm Qwave)
 	endif()
 endif()
 
@@ -86,7 +85,7 @@ if(ENABLE_STATIC)
 	add_library(ortp-static STATIC ${ORTP_HEADER_FILES} ${ORTP_SOURCE_FILES_C} ${ORTP_SOURCE_FILES_CXX})
 	set_target_properties(ortp-static PROPERTIES OUTPUT_NAME ortp)
 	target_compile_definitions(ortp-static PRIVATE "ORTP_EXPORTS")
-	target_link_libraries(ortp-static ${LIBS})
+	target_link_libraries(ortp-static ${ORTP_LIBS})
 	install(TARGETS ortp-static EXPORT ${EXPORT_TARGETS_NAME}Targets
 		ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 		PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
@@ -104,7 +103,7 @@ if(ENABLE_SHARED)
 		target_compile_options(ortp PRIVATE "/DELAYLOAD:Qwave.dll")
 	endif()
 	target_compile_definitions(ortp PRIVATE "ORTP_EXPORTS")
-	target_link_libraries(ortp ${LIBS})
+	target_link_libraries(ortp ${ORTP_LIBS})
 	if(MSVC)
 		if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 			install(FILES ${CMAKE_CURRENT_BINARY_DIR}/Debug/ortp.pdb

@@ -81,6 +81,8 @@ else()
 	find_package(BcToolbox 0.0.3 REQUIRED)
 endif()
 
+find_package(BcToolbox 0.0.3 REQUIRED)
+
 check_include_file(sys/uio.h HAVE_SYS_UIO_H)
 check_include_file(sys/audio.h HAVE_SYS_AUDIO_H)
 check_include_file(sys/shm.h HAVE_SYS_SHM_H)
